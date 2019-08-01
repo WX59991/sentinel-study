@@ -1,0 +1,192 @@
+package com.alibaba.csp.sentinel.demo.cluster.init;
+
+import com.alibaba.csp.sentinel.cluster.ClusterStateManager;
+import com.alibaba.csp.sentinel.cluster.client.config.ClusterClientAssignConfig;
+import com.alibaba.csp.sentinel.cluster.client.config.ClusterClientConfig;
+import com.alibaba.csp.sentinel.cluster.client.config.ClusterClientConfigManager;
+import com.alibaba.csp.sentinel.cluster.flow.rule.ClusterFlowRuleManager;
+import com.alibaba.csp.sentinel.cluster.flow.rule.ClusterParamFlowRuleManager;
+import com.alibaba.csp.sentinel.cluster.server.config.ClusterServerConfigManager;
+import com.alibaba.csp.sentinel.cluster.server.config.ServerTransportConfig;
+import com.alibaba.csp.sentinel.datasource.ReadableDataSource;
+import com.alibaba.csp.sentinel.datasource.nacos.NacosDataSource;
+import com.alibaba.csp.sentinel.demo.cluster.entity.ClusterGroupEntity;
+import com.alibaba.csp.sentinel.init.InitFunc;
+import com.alibaba.csp.sentinel.slots.block.flow.FlowRule;
+import com.alibaba.csp.sentinel.slots.block.flow.FlowRuleManager;
+import com.alibaba.csp.sentinel.slots.block.flow.param.ParamFlowRule;
+import com.alibaba.csp.sentinel.slots.block.flow.param.ParamFlowRuleManager;
+import com.alibaba.csp.sentinel.transport.config.TransportConfig;
+import com.alibaba.csp.sentinel.util.HostNameUtil;
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.TypeReference;
+import com.unicom.enums.ServerParamEnum;
+
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+
+/**
+ * @author wangxia
+ * @date 2019/8/1 9:14
+ * @Description:
+ */
+public class DemoClusterInitFunc implements InitFunc {
+
+    private static final String APP_NAME = "appA";
+
+    private final String flowDataId = APP_NAME + ServerParamEnum.FLOW_POSTFIX.value();
+    private final String paramDataId = APP_NAME + ServerParamEnum.PARAM_FLOW_POSTFIX.value();
+    private final String configDataId = APP_NAME + "-cluster-client-config";
+    private final String clusterMapDataId = APP_NAME + ServerParamEnum.CLUSTER_MAP_POSTFIX.value();
+
+    @Override
+    public void init() throws Exception {
+        // Register client dynamic rule data source.
+        initDynamicRuleProperty();
+
+        // Register token client related data source.  注册令牌客户端相关数据源
+        // Token client common config:
+        initClientConfigProperty();
+        // Token client assign config (e.g. target token server) retrieved from assign map:
+        initClientServerAssignProperty();
+
+        // Register token server related data source.
+        // Register dynamic rule data source supplier for token server:
+        registerClusterRuleSupplier();
+        // Token server transport config extracted from assign map:
+        initServerTransportConfigProperty();
+
+        // Init cluster state property for extracting mode from cluster map data source.
+        initStateProperty();
+    }
+
+    /**
+     * 通过配置文件初始化限流规则
+     */
+    private void initDynamicRuleProperty() {
+        //从nacos读取限流规则
+        ReadableDataSource<String, List<FlowRule>> ruleSource = new NacosDataSource<>(ServerParamEnum.remoteAddress.value(), ServerParamEnum.groupId.value(),
+                flowDataId, source -> JSON.parseObject(source, new TypeReference<List<FlowRule>>() {}));
+        //注册限流规则
+        FlowRuleManager.register2Property(ruleSource.getProperty());
+        //从nacos读取参数限制规则
+        ReadableDataSource<String, List<ParamFlowRule>> paramRuleSource = new NacosDataSource<>(ServerParamEnum.remoteAddress.value(), ServerParamEnum.groupId.value(),
+                paramDataId, source -> JSON.parseObject(source, new TypeReference<List<ParamFlowRule>>() {}));
+       //注册参数限流规则
+        ParamFlowRuleManager.register2Property(paramRuleSource.getProperty());
+    }
+
+    private void initClientConfigProperty() {
+        ClusterClientConfig clientConfig = new ClusterClientConfig();
+        ReadableDataSource<String, ClusterClientConfig> clientConfigDs = new NacosDataSource<>(ServerParamEnum.remoteAddress.value(), ServerParamEnum.groupId.value(),
+                configDataId, source -> JSON.parseObject(source, new TypeReference<ClusterClientConfig>() {}));
+        ClusterClientConfigManager.registerClientConfigProperty(clientConfigDs.getProperty());
+    }
+
+    private void initServerTransportConfigProperty() {
+        ReadableDataSource<String, ServerTransportConfig> serverTransportDs = new NacosDataSource<>(ServerParamEnum.remoteAddress.value(), ServerParamEnum.groupId.value(),
+                clusterMapDataId, source -> {
+            List<ClusterGroupEntity> groupList = JSON.parseObject(source, new TypeReference<List<ClusterGroupEntity>>() {});
+            return Optional.ofNullable(groupList)
+                    .flatMap(this::extractServerTransportConfig)
+                    .orElse(null);
+        });
+        ClusterServerConfigManager.registerServerTransportProperty(serverTransportDs.getProperty());
+    }
+
+    private void registerClusterRuleSupplier() {
+        // Register cluster flow rule property supplier which creates data source by namespace.
+        // Flow rule dataId format: ${namespace}-flow-rules
+        ClusterFlowRuleManager.setPropertySupplier(namespace -> {
+            ReadableDataSource<String, List<FlowRule>> ds = new NacosDataSource<>(ServerParamEnum.remoteAddress.value(), ServerParamEnum.groupId.value(),
+                    namespace + ServerParamEnum.FLOW_POSTFIX.value(),
+                    source -> JSON.parseObject(source, new TypeReference<List<FlowRule>>() {}));
+            return ds.getProperty();
+        });
+
+        // Register cluster parameter flow rule property supplier.
+        //读取参数配置
+        ClusterParamFlowRuleManager.setPropertySupplier(namespace -> {
+            ReadableDataSource<String, List<ParamFlowRule>> ds = new NacosDataSource<>(ServerParamEnum.remoteAddress.value(), ServerParamEnum.groupId.value(),
+                    namespace + ServerParamEnum.PARAM_FLOW_POSTFIX.value(),
+                    source -> JSON.parseObject(source, new TypeReference<List<ParamFlowRule>>() {}));
+            return ds.getProperty();
+        });
+    }
+
+    private void initClientServerAssignProperty() {
+        // Cluster map format:
+        // [{"clientSet":["112.12.88.66@8729","112.12.88.67@8727"],"ip":"112.12.88.68","machineId":"112.12.88.68@8728","port":11111}]
+        // machineId: <ip@commandPort>, commandPort for port exposed to Sentinel dashboard (transport module)
+        ReadableDataSource<String, ClusterClientAssignConfig> clientAssignDs = new NacosDataSource<>(ServerParamEnum.remoteAddress.value(), ServerParamEnum.groupId.value(),
+                clusterMapDataId, source -> {
+            List<ClusterGroupEntity> groupList = JSON.parseObject(source, new TypeReference<List<ClusterGroupEntity>>() {});
+            return Optional.ofNullable(groupList)
+                    .flatMap(this::extractClientAssignment)
+                    .orElse(null);
+        });
+        ClusterClientConfigManager.registerServerAssignProperty(clientAssignDs.getProperty());
+    }
+
+    private void initStateProperty() {
+        // Cluster map format:
+        // [{"clientSet":["112.12.88.66@8729","112.12.88.67@8727"],"ip":"112.12.88.68","machineId":"112.12.88.68@8728","port":11111}]
+        // machineId: <ip@commandPort>, commandPort for port exposed to Sentinel dashboard (transport module)
+        ReadableDataSource<String, Integer> clusterModeDs = new NacosDataSource<>(ServerParamEnum.remoteAddress.value(), ServerParamEnum.groupId.value(),
+                clusterMapDataId, source -> {
+            List<ClusterGroupEntity> groupList = JSON.parseObject(source, new TypeReference<List<ClusterGroupEntity>>() {});
+            return Optional.ofNullable(groupList)
+                    .map(this::extractMode)
+                    .orElse(ClusterStateManager.CLUSTER_NOT_STARTED);
+        });
+        ClusterStateManager.registerProperty(clusterModeDs.getProperty());
+    }
+
+    private int extractMode(List<ClusterGroupEntity> groupList) {
+        // If any server group machineId matches current, then it's token server.
+        if (groupList.stream().anyMatch(this::machineEqual)) {
+            return ClusterStateManager.CLUSTER_SERVER;
+        }
+        // If current machine belongs to any of the token server group, then it's token client.
+        // Otherwise it's unassigned, should be set to NOT_STARTED.
+        boolean canBeClient = groupList.stream()
+                .flatMap(e -> e.getClientSet().stream())
+                .filter(Objects::nonNull)
+                .anyMatch(e -> e.equals(getCurrentMachineId()));
+        return canBeClient ? ClusterStateManager.CLUSTER_CLIENT : ClusterStateManager.CLUSTER_NOT_STARTED;
+    }
+
+    private Optional<ServerTransportConfig> extractServerTransportConfig(List<ClusterGroupEntity> groupList) {
+        return groupList.stream()
+                .filter(this::machineEqual)
+                .findAny()
+                .map(e -> new ServerTransportConfig().setPort(e.getPort()).setIdleSeconds(600));
+    }
+
+    private Optional<ClusterClientAssignConfig> extractClientAssignment(List<ClusterGroupEntity> groupList) {
+        if (groupList.stream().anyMatch(this::machineEqual)) {
+            return Optional.empty();
+        }
+        // Build client assign config from the client set of target server group.
+        for (ClusterGroupEntity group : groupList) {
+            if (group.getClientSet().contains(getCurrentMachineId())) {
+                String ip = group.getIp();
+                Integer port = group.getPort();
+                return Optional.of(new ClusterClientAssignConfig(ip, port));
+            }
+        }
+        return Optional.empty();
+    }
+
+    private boolean machineEqual(/*@Valid*/ ClusterGroupEntity group) {
+        return getCurrentMachineId().equals(group.getMachineId());
+    }
+
+    private String getCurrentMachineId() {
+        // Note: this may not work well for container-based env.
+        return HostNameUtil.getIp() + SEPARATOR + TransportConfig.getRuntimePort();
+    }
+
+    private static final String SEPARATOR = "@";
+}
