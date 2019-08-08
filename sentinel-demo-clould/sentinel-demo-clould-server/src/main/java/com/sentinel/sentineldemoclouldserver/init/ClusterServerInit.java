@@ -2,8 +2,6 @@ package com.sentinel.sentineldemoclouldserver.init;
 
 import com.alibaba.csp.sentinel.cluster.flow.rule.ClusterFlowRuleManager;
 import com.alibaba.csp.sentinel.cluster.flow.rule.ClusterParamFlowRuleManager;
-import com.alibaba.csp.sentinel.cluster.server.config.ClusterServerConfigManager;
-import com.alibaba.csp.sentinel.cluster.server.config.ServerTransportConfig;
 import com.alibaba.csp.sentinel.datasource.ReadableDataSource;
 import com.alibaba.csp.sentinel.datasource.nacos.NacosDataSource;
 import com.alibaba.csp.sentinel.init.InitFunc;
@@ -14,7 +12,6 @@ import com.alibaba.fastjson.TypeReference;
 import com.unicom.enums.ServerParamEnum;
 
 import java.util.List;
-import java.util.Set;
 
 /**
  * @author wangxia
@@ -46,15 +43,15 @@ public class ClusterServerInit implements InitFunc {
 
         // Server namespace set (scope) data source.
         //为 namespace 注册一个 SentinelProperty
-        ReadableDataSource<String, Set<String>> namespaceDs = new NacosDataSource<>(ServerParamEnum.remoteAddress.value(), ServerParamEnum.groupId.value(),
-                ServerParamEnum.namespaceSetDataId.value(), source -> JSON.parseObject(source, new TypeReference<Set<String>>() {}));
-        ClusterServerConfigManager.registerNamespaceSetProperty(namespaceDs.getProperty());
-        // Server transport configuration data source.
-        //为 ServerTransportConfig 注册一个 SentinelProperty
-        ReadableDataSource<String, ServerTransportConfig> transportConfigDs = new NacosDataSource<>(ServerParamEnum.remoteAddress.value(),
-                ServerParamEnum.groupId.value(), ServerParamEnum.serverTransportDataId.value(),
-                source -> JSON.parseObject(source, new TypeReference<ServerTransportConfig>() {}));
+//        ReadableDataSource<String, Set<String>> namespaceDs = new NacosDataSource<>(ServerParamEnum.remoteAddress.value(), ServerParamEnum.groupId.value(),
+//                ServerParamEnum.namespaceSetDataId.value(), source -> JSON.parseObject(source, new TypeReference<Set<String>>() {}));
+//        ClusterServerConfigManager.registerNamespaceSetProperty(namespaceDs.getProperty());
+//        // Server transport configuration data source.
+//        //为 ServerTransportConfig 注册一个 SentinelProperty
+//        ReadableDataSource<String, ServerTransportConfig> transportConfigDs = new NacosDataSource<>(ServerParamEnum.remoteAddress.value(),
+//                ServerParamEnum.groupId.value(), ServerParamEnum.serverTransportDataId.value(),
+//                source -> JSON.parseObject(source, new TypeReference<ServerTransportConfig>() {}));
         //注册
-        ClusterServerConfigManager.registerServerTransportProperty(transportConfigDs.getProperty());
+//        ClusterServerConfigManager.registerServerTransportProperty(transportConfigDs.getProperty());
     }
 }

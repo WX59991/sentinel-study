@@ -19,7 +19,7 @@
         <sentinel.study.version>0.0.1-SNAPSHOT</sentinel.study.version>
         <spring-cloud.version>Finchley.SR1</spring-cloud.version>
         <spring-cloud-alibaba.version>0.2.1.RELEASE</spring-cloud-alibaba.version>
-        <sentinel.version>1.6.2</sentinel.version>
+        <sentinel.version>1.4.1</sentinel.version>
     </properties>
 
     <modules>

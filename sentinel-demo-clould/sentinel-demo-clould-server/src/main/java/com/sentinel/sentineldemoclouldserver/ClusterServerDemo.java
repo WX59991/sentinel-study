@@ -35,15 +35,17 @@ import java.util.Collections;
 public class ClusterServerDemo {
 
     public static void start(String[] args) throws Exception {
-        // 创建token服务
+        // 创建一个 ClusterTokenServer 的实例，独立模式
         ClusterTokenServer tokenServer = new SentinelDefaultTokenServer();
 
         // A sample for manually load config for cluster server.
         // It's recommended to use dynamic data source to cluster manage config and rules.
         // See the sample in DemoClusterServerInitFunc for detail.
+        //加载ServerTransportConfig
         ClusterServerConfigManager.loadGlobalTransportConfig(new ServerTransportConfig()
             .setIdleSeconds(600)
             .setPort(11111));
+        //加载namespace
         ClusterServerConfigManager.loadServerNamespaceSet(Collections.singleton(ServerParamEnum.APP_NAME.value()));
 
         // Start the server.

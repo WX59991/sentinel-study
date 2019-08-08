@@ -4,9 +4,6 @@ import com.alibaba.csp.sentinel.cluster.ClusterStateManager;
 import com.alibaba.csp.sentinel.cluster.client.config.ClusterClientAssignConfig;
 import com.alibaba.csp.sentinel.cluster.client.config.ClusterClientConfig;
 import com.alibaba.csp.sentinel.cluster.client.config.ClusterClientConfigManager;
-import com.alibaba.csp.sentinel.cluster.flow.rule.ClusterFlowRuleManager;
-import com.alibaba.csp.sentinel.cluster.flow.rule.ClusterParamFlowRuleManager;
-import com.alibaba.csp.sentinel.cluster.server.config.ClusterServerConfigManager;
 import com.alibaba.csp.sentinel.cluster.server.config.ServerTransportConfig;
 import com.alibaba.csp.sentinel.datasource.ReadableDataSource;
 import com.alibaba.csp.sentinel.datasource.nacos.NacosDataSource;
@@ -34,10 +31,10 @@ import java.util.Optional;
 public class DemoClusterInitFunc implements InitFunc {
 
     private static final String APP_NAME = "appA";
-
+    private static final  Integer CLUSTER_SERVER_PORT=11111;
+    private static final Integer REQUEST_TIME_OUT=200;
     private final String flowDataId = APP_NAME + ServerParamEnum.FLOW_POSTFIX.value();
     private final String paramDataId = APP_NAME + ServerParamEnum.PARAM_FLOW_POSTFIX.value();
-    private final String configDataId = APP_NAME + "-cluster-client-config";
     private final String clusterMapDataId = APP_NAME + ServerParamEnum.CLUSTER_MAP_POSTFIX.value();
 
     @Override
@@ -45,19 +42,10 @@ public class DemoClusterInitFunc implements InitFunc {
         // Register client dynamic rule data source.
         initDynamicRuleProperty();
 
-        // Register token client related data source.
+        // Register token client related data source.  注册令牌客户端相关数据源
         // Token client common config:
         initClientConfigProperty();
-        // Token client assign config (e.g. target token server) retrieved from assign map:
-        initClientServerAssignProperty();
 
-        // Register token server related data source.
-        // Register dynamic rule data source supplier for token server:
-        registerClusterRuleSupplier();
-        // Token server transport config extracted from assign map:
-        initServerTransportConfigProperty();
-
-        // Init cluster state property for extracting mode from cluster map data source.
         initStateProperty();
     }
 
@@ -65,65 +53,52 @@ public class DemoClusterInitFunc implements InitFunc {
      * 通过配置文件初始化限流规则
      */
     private void initDynamicRuleProperty() {
+        //从nacos读取限流规则
         ReadableDataSource<String, List<FlowRule>> ruleSource = new NacosDataSource<>(ServerParamEnum.remoteAddress.value(), ServerParamEnum.groupId.value(),
                 flowDataId, source -> JSON.parseObject(source, new TypeReference<List<FlowRule>>() {}));
+        //注册限流规则
         FlowRuleManager.register2Property(ruleSource.getProperty());
-
+        //从nacos读取参数限制规则
         ReadableDataSource<String, List<ParamFlowRule>> paramRuleSource = new NacosDataSource<>(ServerParamEnum.remoteAddress.value(), ServerParamEnum.groupId.value(),
                 paramDataId, source -> JSON.parseObject(source, new TypeReference<List<ParamFlowRule>>() {}));
+        //注册参数限流规则
         ParamFlowRuleManager.register2Property(paramRuleSource.getProperty());
     }
 
+    /**
+     * 加载集群客户端配置
+     * 主要是集群服务端的相关连接信息
+     */
     private void initClientConfigProperty() {
-        ReadableDataSource<String, ClusterClientConfig> clientConfigDs = new NacosDataSource<>(ServerParamEnum.remoteAddress.value(), ServerParamEnum.groupId.value(),
-                configDataId, source -> JSON.parseObject(source, new TypeReference<ClusterClientConfig>() {}));
-        ClusterClientConfigManager.registerClientConfigProperty(clientConfigDs.getProperty());
+        ClusterClientAssignConfig assignConfig = new ClusterClientAssignConfig();
+        assignConfig.setServerHost(ServerParamEnum.remoteAddress.value());
+        assignConfig.setServerPort(CLUSTER_SERVER_PORT);
+        ClusterClientConfigManager.applyNewAssignConfig(assignConfig);
+
+        ClusterClientConfig clientConfig = new ClusterClientConfig();
+        clientConfig.setRequestTimeout(REQUEST_TIME_OUT);
+        ClusterClientConfigManager.applyNewConfig(clientConfig);
     }
 
-    private void initServerTransportConfigProperty() {
-        ReadableDataSource<String, ServerTransportConfig> serverTransportDs = new NacosDataSource<>(ServerParamEnum.remoteAddress.value(), ServerParamEnum.groupId.value(),
-                clusterMapDataId, source -> {
-            List<ClusterGroupEntity> groupList = JSON.parseObject(source, new TypeReference<List<ClusterGroupEntity>>() {});
-            return Optional.ofNullable(groupList)
-                    .flatMap(this::extractServerTransportConfig)
-                    .orElse(null);
-        });
-        ClusterServerConfigManager.registerServerTransportProperty(serverTransportDs.getProperty());
+
+    /**
+     * 动态加载服务端配置信息
+     */
+    private void initClientAssignProperty() {
+        String clientConfigDataId = "cluster-client-config";
+        // 初始化一个配置ClusterClientConfig的 Nacos 数据源
+        ReadableDataSource<String, ClusterClientConfig> clientConfigDS = new NacosDataSource<>(ServerParamEnum.remoteAddress.value(), ServerParamEnum.groupId.value(), clientConfigDataId,
+                source -> JSON.parseObject(source, new TypeReference<ClusterClientConfig>() {}));
+        ClusterClientConfigManager.registerClientConfigProperty(clientConfigDS.getProperty());
+
+        String clientAssignConfigDataId = "cluster-client-assign-config";
+        // 初始化一个配置ClusterClientAssignConfig的 Nacos 数据源
+        ReadableDataSource<String, ClusterClientAssignConfig> clientAssignConfigDS = new NacosDataSource<>(ServerParamEnum.remoteAddress.value(), ServerParamEnum.groupId.value(), clientAssignConfigDataId,
+                source -> JSON.parseObject(source, new TypeReference<ClusterClientAssignConfig>() {}));
+        ClusterClientConfigManager.registerServerAssignProperty(clientAssignConfigDS.getProperty());
+
     }
 
-    private void registerClusterRuleSupplier() {
-        // Register cluster flow rule property supplier which creates data source by namespace.
-        // Flow rule dataId format: ${namespace}-flow-rules
-        ClusterFlowRuleManager.setPropertySupplier(namespace -> {
-            ReadableDataSource<String, List<FlowRule>> ds = new NacosDataSource<>(ServerParamEnum.remoteAddress.value(), ServerParamEnum.groupId.value(),
-                    namespace + ServerParamEnum.FLOW_POSTFIX.value(),
-                    source -> JSON.parseObject(source, new TypeReference<List<FlowRule>>() {}));
-            return ds.getProperty();
-        });
-
-        // Register cluster parameter flow rule property supplier.
-        //读取参数配置
-        ClusterParamFlowRuleManager.setPropertySupplier(namespace -> {
-            ReadableDataSource<String, List<ParamFlowRule>> ds = new NacosDataSource<>(ServerParamEnum.remoteAddress.value(), ServerParamEnum.groupId.value(),
-                    namespace + ServerParamEnum.PARAM_FLOW_POSTFIX.value(),
-                    source -> JSON.parseObject(source, new TypeReference<List<ParamFlowRule>>() {}));
-            return ds.getProperty();
-        });
-    }
-
-    private void initClientServerAssignProperty() {
-        // Cluster map format:
-        // [{"clientSet":["112.12.88.66@8729","112.12.88.67@8727"],"ip":"112.12.88.68","machineId":"112.12.88.68@8728","port":11111}]
-        // machineId: <ip@commandPort>, commandPort for port exposed to Sentinel dashboard (transport module)
-        ReadableDataSource<String, ClusterClientAssignConfig> clientAssignDs = new NacosDataSource<>(ServerParamEnum.remoteAddress.value(), ServerParamEnum.groupId.value(),
-                clusterMapDataId, source -> {
-            List<ClusterGroupEntity> groupList = JSON.parseObject(source, new TypeReference<List<ClusterGroupEntity>>() {});
-            return Optional.ofNullable(groupList)
-                    .flatMap(this::extractClientAssignment)
-                    .orElse(null);
-        });
-        ClusterClientConfigManager.registerServerAssignProperty(clientAssignDs.getProperty());
-    }
 
     private void initStateProperty() {
         // Cluster map format:

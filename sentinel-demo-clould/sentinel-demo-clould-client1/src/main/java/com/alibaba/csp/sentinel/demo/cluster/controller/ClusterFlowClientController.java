@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class ClusterFlowClientController {
 
-    private static String RESOURCE_NAME = "sayHelloBlockHandler";
+    private static String RESOURCE_NAME = "cluster-resource";
 
     /**
      * 模拟流量请求该方法
